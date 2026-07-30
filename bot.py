@@ -1,12 +1,12 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import re
 import time
 from datetime import timedelta
 import threading
 from flask import Flask
 import edge_tts
-import os  # Necesario para leer el Token de forma segura
+import os
 from PIL import Image, ImageDraw, ImageOps, ImageFont
 import io
 import requests
@@ -14,14 +14,16 @@ import asyncio
 import yt_dlp
 import sqlite3
 import random
-from discord.ext import tasks
+import static_ffmpeg
 
-# --- CONFIGURACIÓN DE FLASK PARA HUGGING FACE ---
+static_ffmpeg.add_paths()
+
+# --- CONFIGURACIÓN DE FLASK (Servidor Web para Render / Mantener Vivo) ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot está vivo!"
+    return "Bot está vivo!",200
 
 @app.route('/status')
 def status():
@@ -35,11 +37,10 @@ intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 🔒 SEGURIDAD
+# 🔒 SEGURIDAD Y DEPURACIÓN
 palabras_prohibidas = ["dox", "doxeo", "raid", "raideo"]
 link_regex = r"(https?://\S+|discord.gg/\S+)"
 usuarios_mensajes = {}
-
 invitaciones_cache = {}
 
 # 🎮 TORNEOS
@@ -53,7 +54,7 @@ CLANES = {
         "nombre": "Clan Alpha ⚔️",
         "descripcion": "...",
         "rol_id": 1509422802128605246,
-        "logo" : "🛡️"
+        "logo": "🛡️"
     },
     "clan_2": {
         "nombre": "clan Beta 👥",
@@ -74,7 +75,7 @@ TIENDA_ROLES = {
         "nombre": "Rango VIP ✨",
         "precio": 500,
         "rol_id": 1111111111111111111,
-        "descripcion": "Acceso a canales exclusivos, canales de voz premium y un color especial en el chat"
+        "descripcion": "Acceso a canales exclusivos, canales de voz premium y un color especial en el chat."
     },
     "elite": {
         "nombre": "Rango Élite 👑",
@@ -86,19 +87,19 @@ TIENDA_ROLES = {
         "nombre": "Torneos",
         "precio": 1000,
         "rol_id": 3333333333333333,
-        "descpcion": "...."
+        "descripcion": "Acceso a la sección de torneos."
     },
     "Acceso_a_clanes": {
         "nombre": "Clanes",
         "precio": 1000,
         "rol_id": 44444444444444444444,
-        "descripcion": "...."
+        "descripcion": "Acceso a la sección de clanes."
     },
     "sorteo": {
-        "nombre": "Inscripción sorteo PRemium 🎟️",
+        "nombre": "Inscripción sorteo Premium 🎟️",
         "precio": 2000,
         "rol_id": 0,
-        "descripcion": "Participación activa de un soreo gigante"
+        "descripcion": "Participación activa en un sorteo gigante."
     }
 }
 
@@ -120,7 +121,6 @@ YTDL_OPTIONS = {
         'preferredcodec': 'mp3',
         'preferredquality': '192',
     }],
-
     'outtmpl': 'music_cache_%(guild_id)s.%(ext)s',
 }
 
@@ -135,7 +135,7 @@ FFMPEG_STREAM_OPTIONS = {
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
-def inizializar_db():
+def inicializar_db():
     conn = sqlite3.connect("economia_qaybio.db")
     cursor = conn.cursor()
     cursor.execute("""
@@ -147,7 +147,7 @@ def inizializar_db():
     conn.commit()
     conn.close()
 
-inizializar_db()
+inicializar_db()
 
 MENSAJES_PROMO = [
     "🔥 ¡Promociones nuevas en nuestra página! No te las pierdas.",
@@ -157,11 +157,8 @@ MENSAJES_PROMO = [
 ]
 
 ID_CANAL_PROMOCIONES = 1522356604186661025
-
 ID_CANAL_ANUNCIO_COMPRAS = 1529240157188784128
-
 ID_CANAL_INVITACIONES = 1508947735561371720
-
 Precio_sorteo = 2000
 ID_canal_LOGS_sorteo = 1529242250775892018
 
@@ -174,7 +171,7 @@ async def cargar_invitaciones():
         except discord.Forbidden:
             print(f"⚠️ No tengo permisos suficientes para leer invitaciones: {guild.name}")
         except Exception as e:
-            print(f"❌ Error al cargar las invitacions {e}")
+            print(f"❌ Error al cargar las invitaciones: {e}")
 
 @tasks.loop(hours=3)
 async def promocion_diaria():
@@ -183,13 +180,13 @@ async def promocion_diaria():
         mensaje_elegido = random.choice(MENSAJES_PROMO)
 
         embed = discord.Embed(
-            title = "🌐 ¡Visita Qaybio!",
+            title="🌐 ¡Visita Qaybio!",
             description=f"{mensaje_elegido}\n\n"
-                        f"👉 Entra aquí para ganar **50 monedas**: [Ir a Qaybio](https://tiendavirtual-801x.onrender.com/)"
+                        f"👉 Entra aquí para ganar **50 monedas**: [Ir a Qaybio](https://qaybio.onrender.com/)\n"
                         f"Escribe el comando `!link` y te enviaré tu enlace único por mensaje privado.",
-            color= discord.Color.gold()
+            color=discord.Color.gold()
         )
-        URL_DEL_BANNER = "https://tiendavirtual-801x.onrender.com/static/imagenes/banner.jpg"
+        URL_DEL_BANNER = "https://qaybio.onrender.com/static/imagenes/banner.jpg"
         embed.set_image(url=URL_DEL_BANNER)
         await canal.send(embed=embed)
 
@@ -214,12 +211,12 @@ async def recompensa_mensual_autonoma():
 
     mes_actual_str = ahora.strftime("%Y-%m")
 
-    if resultado is None or resultado[0] !=mes_actual_str:
-        print(f"📆 [SISTEMA MENSUAL] ¡Ha comenzado un nuevo periodo ({mes_actual_str}) ! Repartiendo 50 monedas...")
+    if resultado is None or resultado[0] != mes_actual_str:
+        print(f"📆 [SISTEMA MENSUAL] ¡Ha comenzado un nuevo periodo ({mes_actual_str})! Repartiendo 50 monedas...")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS usuarios(
-                used_id TEXT PRIMARY KEY,
+                user_id TEXT PRIMARY KEY,
                 monedas INTEGER DEFAULT 0           
             )
         """)
@@ -232,14 +229,14 @@ async def recompensa_mensual_autonoma():
             cursor.execute("UPDATE control_premios SET valor = ? WHERE clave = 'ultimo_mes_premiado'", (mes_actual_str,))
 
         conn.commit()
-        print("💰 [DISTEMA MENSUAL] Se han abonado 50 monedas a todos los usuarios de la base de datos")
+        print("💰 [SISTEMA MENSUAL] Se han abonado 50 monedas a todos los usuarios de la base de datos.")
 
-        canal = bot.get_channel("TU_ID_DEL CANAL")
+        canal = bot.get_channel(ID_CANAL_ANUNCIO_COMPRAS)
         if canal:
             embed = discord.Embed(
-                title="🎁 ¡Legó tu recompensa mensual!",
-                description=f"Se han depositado **50 monedas** 🪙 automaticamente en las cuentas de todos los usuarios\n\n"
-                            f"Revisa tu saldo con `!dinero`",
+                title="🎁 ¡Llegó tu recompensa mensual!",
+                description="Se han depositado **50 monedas** 🪙 automáticamente en las cuentas de todos los usuarios.\n\n"
+                            "Revisa tu saldo con `!dinero`.",
                 color=discord.Color.green()
             )
             await canal.send(embed=embed)
@@ -248,11 +245,11 @@ async def recompensa_mensual_autonoma():
 
 @bot.event
 async def on_ready():
-    bot.add_view(TicketCOnsultaView())
+    bot.add_view(TicketConsultaView())
     bot.add_view(SalaVozView())
     bot.add_view(SorteoView())
 
-    await  cargar_invitaciones()
+    await cargar_invitaciones()
 
     print(f"✅ Bot conectado como {bot.user}")
     
@@ -261,7 +258,9 @@ async def on_ready():
     if not recompensa_mensual_autonoma.is_running():
         recompensa_mensual_autonoma.start()
 
-class RegistroSorteoModal(discord.ui.Modal, title= "Inscripcion del Sorteo Premium"):
+# --- VISTAS Y MODALES (UI) ---
+
+class RegistroSorteoModal(discord.ui.Modal, title="Inscripción del Sorteo Premium"):
     nombre_real = discord.ui.TextInput(
         label="Nombre del usuario",
         placeholder="Ej: PlatanoJugador99",
@@ -274,24 +273,24 @@ class RegistroSorteoModal(discord.ui.Modal, title= "Inscripcion del Sorteo Premi
         style=discord.TextStyle.long,
         placeholder="Escribe aquí cualquier detalle opcional...",
         required=False,
-        max_length= 200
+        max_length=200
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        user_id= str(interaction.user.id)
+        user_id = str(interaction.user.id)
 
         conn = sqlite3.connect("economia_qaybio.db")
-        cursor= conn.cursor()
+        cursor = conn.cursor()
 
-        cursor.execute("SELECT monedas FROM usuarios WHERE user_id=?", (user_id))
-        resultado= cursor.fetchone()
+        cursor.execute("SELECT monedas FROM usuarios WHERE user_id=?", (user_id,))
+        resultado = cursor.fetchone()
         monedas_actuales = resultado[0] if resultado else 0
 
-        if  monedas_actuales < Precio_sorteo:
+        if monedas_actuales < Precio_sorteo:
             conn.close()
             return await interaction.response.send_message(
                 f"❌ Inscripción cancelada. Ya no cuentas con las **{Precio_sorteo}** monedas necesarias (Tienes: {monedas_actuales} 🪙).",
-                ephemeral= True
+                ephemeral=True
             )
         
         try:
@@ -300,48 +299,48 @@ class RegistroSorteoModal(discord.ui.Modal, title= "Inscripcion del Sorteo Premi
         except Exception as e:
             conn.close()
             print(f"Error en la base de datos al comprar sorteo: {e}")
-            return await interaction.response.send_message("❌Ocurrió un error al intentar procesar el pago. Intentalo de nuevo", ephemeral= True)
+            return await interaction.response.send_message("❌ Ocurrió un error al intentar procesar el pago. Inténtalo de nuevo.", ephemeral=True)
         
         conn.close()
 
         canal_privado = interaction.guild.get_channel(ID_canal_LOGS_sorteo)
         if canal_privado:
             embed_log = discord.Embed(
-                title="🎟️ Nueva incripción recibida",
-                description= f"El usuario {interaction.user.mention} se ha inscrito exitosamente al cobrarle las monedas.",
-                color= discord.Color.gold()
+                title="🎟️ Nueva inscripción recibida",
+                description=f"El usuario {interaction.user.mention} se ha inscrito exitosamente al cobrarle las monedas.",
+                color=discord.Color.gold()
             )
 
-            embed_log.add_field(name="👤 Usuario Discord", value= f"{interaction.user} (ID: `{interaction.user.id}`)", inline=True)
+            embed_log.add_field(name="👤 Usuario Discord", value=f"{interaction.user} (ID: `{interaction.user.id}`)", inline=True)
             embed_log.add_field(name="📛 Nombre Registrado", value=self.nombre_real.value, inline=True)
             embed_log.add_field(name="💬 Mensaje/Comentario", value=self.comentarios.value or "*Ninguno*", inline=False)
             embed_log.add_field(name="💰 Transacción", value=f"Se descontaron **{Precio_sorteo}** monedas de tu saldo.", inline=False)
-            embed_log.set_thumbnail(url= interaction.user.display_avatar.url)
+            embed_log.set_thumbnail(url=interaction.user.display_avatar.url)
 
             await canal_privado.send(embed=embed_log)
 
         canal_anuncios = interaction.guild.get_channel(ID_CANAL_ANUNCIO_COMPRAS)
         if canal_anuncios:
             embed_anuncio_publico = discord.Embed(
-                title="🎟️ ¡Nuevo APrticipante en sorteo PREMIUM! 🎟️",
-                description=f"{interaction.user.mention} ha gastado **{Precio_sorteo}** monedas",
-                color= discord.Color.red()
+                title="🎟️ ¡Nuevo Participante en Sorteo PREMIUM! 🎟️",
+                description=f"{interaction.user.mention} ha gastado **{Precio_sorteo}** monedas.",
+                color=discord.Color.red()
             )
 
             embed_anuncio_publico.set_thumbnail(url=interaction.user.display_avatar.url)
-            embed_anuncio_publico.set_footer(text="¡Aún cupos disponibles!, has tu compra antes de que se termine")
+            embed_anuncio_publico.set_footer(text="¡Aún hay cupos disponibles!, haz tu compra antes de que terminen.")
 
             await canal_anuncios.send(embed=embed_anuncio_publico)
 
         embed_usuario = discord.Embed(
             title="✅ ¡Inscripción completada!",
-            description=f"Has pagado **{Precio_sorteo}** monedas 🪙 y tus datos se registraron correctamente. \n"
+            description=f"Has pagado **{Precio_sorteo}** monedas 🪙 y tus datos se registraron correctamente.\n"
                         f"¡Mucha suerte en el sorteo!",
             color=discord.Color.green()
         )
 
         embed_usuario.add_field(name="📛 Registrado como:", value=self.nombre_real.value, inline=True)
-        embed_usuario.add_field(name="💳 NUevo saldo", value=f"{monedas_actuales-Precio_sorteo} 🪙", inline=True)
+        embed_usuario.add_field(name="💳 Nuevo saldo", value=f"{monedas_actuales - Precio_sorteo} 🪙", inline=True)
 
         await interaction.response.send_message(embed=embed_usuario, ephemeral=True)
 
@@ -349,7 +348,7 @@ class SorteoView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Inscribirse al sorteo (2,000 🪙)", style= discord.ButtonStyle.danger, emoji="🎟️", custom_id="btn_inscripcion_sorteo")
+    @discord.ui.button(label="Inscribirse al sorteo (2,000 🪙)", style=discord.ButtonStyle.danger, emoji="🎟️", custom_id="btn_inscripcion_sorteo")
     async def inscribirse(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_id = str(interaction.user.id)
 
@@ -372,8 +371,8 @@ class SorteoView(discord.ui.View):
         await interaction.response.send_modal(RegistroSorteoModal())
 
 class TorneoView(discord.ui.View):
-    def __init__(self):  # CORREGIDO: Llevaba doble guion bajo 'init_'
-        super().__init__(timeout=None)  # CORREGIDO: Llevaba doble guion bajo 'init_'
+    def __init__(self):
+        super().__init__(timeout=None)
 
     @discord.ui.button(label="Java PvP Pro", style=discord.ButtonStyle.primary)
     async def java(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -404,7 +403,7 @@ class SeleccionarClanMenu(discord.ui.Select):
             opciones.append(discord.SelectOption(
                 label=datos["nombre"], 
                 value=clave, 
-                description=datos["descripcion"][:50],  # Recorte seguro para evitar bugs de límite
+                description=datos["descripcion"][:50],
                 emoji=datos["logo"]
             ))
         super().__init__(placeholder="Elige el clan al que deseas unirte...", min_values=1, max_values=1, options=opciones)
@@ -417,7 +416,6 @@ class SeleccionarClanMenu(discord.ui.Select):
         if not rol:
             return await interaction.response.send_message("❌ Error: El rol de este clan no está configurado correctamente en el bot.", ephemeral=True)
 
-        # Verificar si ya posee algún rol de los clanes existentes para evitar duplicados
         for clan in CLANES.values():
             if guild.get_role(clan["rol_id"]) in interaction.user.roles:
                 return await interaction.response.send_message("⚠️ Ya perteneces a un clan actualmente. Debes salir de tu clan actual primero.", ephemeral=True)
@@ -428,7 +426,6 @@ class SeleccionarClanMenu(discord.ui.Select):
         except discord.Forbidden:
             await interaction.response.send_message("❌ El bot no tiene permisos jerárquicos suficientes para darte este rol.", ephemeral=True)
 
-# Formulario Emergente (Modal) para Solicitar un nuevo Clan
 class CrearClanModal(discord.ui.Modal, title="Formulario de Creación de Clan"):
     nombre_clan = discord.ui.TextInput(label="Nombre del Clan", placeholder="Ej: Los Imparables", min_length=3, max_length=30)
     desc_clan = discord.ui.TextInput(label="Descripción Breve", style=discord.TextStyle.long, placeholder="Explica de qué trata tu clan y tus objetivos...", min_length=10, max_length=200)
@@ -436,14 +433,12 @@ class CrearClanModal(discord.ui.Modal, title="Formulario de Creación de Clan"):
     async def on_submit(self, interaction: discord.Interaction):
         guild = interaction.guild
         
-        # Configurar los permisos iniciales del canal de tickets (Administradores y el solicitante)
         permisos = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False), # Oculto al público
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True) # El bot
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
 
-        # Intentamos buscar canales con formato secuencial para nombrar el ticket
         numero_ticket = 1
         for channel in guild.channels:
             if channel.name.startswith("ticket-clan-"):
@@ -454,14 +449,12 @@ class CrearClanModal(discord.ui.Modal, title="Formulario de Creación de Clan"):
                 except ValueError:
                     pass
 
-        # Crear el canal de texto privado dentro del servidor
         canal_ticket = await guild.create_text_channel(
             name=f"ticket-clan-{numero_ticket}",
             overwrites=permisos,
             topic=f"Solicitud de clan de {interaction.user.name}"
         )
 
-        # Mensaje estético dentro del ticket creado
         embed_ticket = discord.Embed(
             title=f"📥 Nueva Solicitud de Clan #{numero_ticket}",
             description=f"Hola {interaction.user.mention}, un administrador revisará tu propuesta pronto.",
@@ -474,7 +467,6 @@ class CrearClanModal(discord.ui.Modal, title="Formulario de Creación de Clan"):
         await canal_ticket.send(embed=embed_ticket)
         await interaction.response.send_message(f"✅ Solicitud procesada. Se ha creado tu canal privado en: {canal_ticket.mention}", ephemeral=True)
 
-# Vista Principal del comando !clan con los 4 botones requeridos
 class ClanView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -490,7 +482,6 @@ class ClanView(discord.ui.View):
 
         for clave, datos in CLANES.items():
             rol = guild.get_role(datos["rol_id"])
-            # Contamos cuántos miembros en el servidor tienen asignado el rol de este clan
             num_miembros = len(rol.members) if rol else 0
             
             info_clan = f"**Logo:** {datos['logo']}\n**Miembros actuales:** `{num_miembros}`\n**Descripción:** {datos['descripcion']}"
@@ -500,14 +491,12 @@ class ClanView(discord.ui.View):
 
     @discord.ui.button(label="Unirse a un Clan", style=discord.ButtonStyle.success, emoji="⚔️")
     async def unirse_clan(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Desplegamos el menú dinámico para que escoja cuál quiere
         vista_menu = discord.ui.View()
         vista_menu.add_item(SeleccionarClanMenu())
         await interaction.response.send_message("Selecciona el clan al que deseas ingresar:", view=vista_menu, ephemeral=True)
 
     @discord.ui.button(label="Crear Clan", style=discord.ButtonStyle.secondary, emoji="👑")
     async def crear_clan(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Desplegamos el formulario nativo flotante
         await interaction.response.send_modal(CrearClanModal())
 
     @discord.ui.button(label="Salir del Clan", style=discord.ButtonStyle.danger, emoji="🚪")
@@ -515,7 +504,6 @@ class ClanView(discord.ui.View):
         guild = interaction.guild
         clanes_removidos = []
 
-        # Buscamos si tiene algún rol de clan y lo removemos
         for clan in CLANES.values():
             rol = guild.get_role(clan["rol_id"])
             if rol and rol in interaction.user.roles:
@@ -531,26 +519,26 @@ class ClanView(discord.ui.View):
         else:
             await interaction.response.send_message("⚠️ No te encuentras registrado en ningún clan de la base de datos.", ephemeral=True)
 
-class consultaModal(discord.ui.Modal, title ="Formulario de Consulta"):
+class consultaModal(discord.ui.Modal, title="Formulario de Consulta"):
     asunto_consulta = discord.ui.TextInput(
-        label = "Asunto / tema corto",
+        label="Asunto / tema corto",
         placeholder="Ej: Mejoras clan / Duda de evento",
-        min_length= 5,
-        max_length= 50
+        min_length=5,
+        max_length=50
     )
     detalle_consulta = discord.ui.TextInput(
-        label = "Escribe tu consulta detallada aquí",
-        style = discord.TextStyle.long,
-        placeholder= "Escribe a detalle tu consulta para que el staff pueda ayudarte...",
-        min_length= 15,
-        max_length= 500
+        label="Escribe tu consulta detallada aquí",
+        style=discord.TextStyle.long,
+        placeholder="Escribe a detalle tu consulta para que el staff pueda ayudarte...",
+        min_length=15,
+        max_length=500
     )
 
     async def on_submit(self, interaction: discord.Interaction):
         guild = interaction.guild
 
         permisos = {
-            guild.default_role: discord.PermissionOverwrite(read_messages= False),
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
@@ -559,32 +547,31 @@ class consultaModal(discord.ui.Modal, title ="Formulario de Consulta"):
         for channel in guild.channels:
             if channel.name.startswith("ticket-consulta-"):
                 try:
-                    num= int(channel.name.split("-")[-1])
+                    num = int(channel.name.split("-")[-1])
                     if num >= numero_ticket:
                         numero_ticket = num + 1
                 except ValueError:
                     pass
 
-
         canal_ticket = await guild.create_text_channel(
-            name = f"ticket-consulta-{numero_ticket}",
+            name=f"ticket-consulta-{numero_ticket}",
             overwrites=permisos,
-            topic= f"Consulta privada de {interaction.user.name}"
+            topic=f"Consulta privada de {interaction.user.name}"
         )
 
         embed_soporte = discord.Embed(
-            title= f"Consulta de Soporte #{numero_ticket}",
-            description=f"Hola {interaction.user.mention}, un miembro del staff atenderá tu consulta lo antes posible",
+            title=f"Consulta de Soporte #{numero_ticket}",
+            description=f"Hola {interaction.user.mention}, un miembro del staff atenderá tu consulta lo antes posible.",
             color=discord.Color.green()
         )
         embed_soporte.add_field(name="Asunto", value=self.asunto_consulta.value, inline=False)
         embed_soporte.add_field(name="Detalle de la consulta", value=self.detalle_consulta.value, inline=False)
-        embed_soporte.set_footer(text="Platano-Bot | Sistema de soporte", icon_url=guild.me.display_avatar.url)
+        embed_soporte.set_footer(text="Plátano-Bot | Sistema de soporte", icon_url=guild.me.display_avatar.url)
 
         await canal_ticket.send(embed=embed_soporte)
-        await interaction.response.send_message(f"¡Tu consulta fue creada! Ve a tu canal privado aquí {canal_ticket.mention}", ephemeral=True)
+        await interaction.response.send_message(f"¡Tu consulta fue creada! Ve a tu canal privado aquí: {canal_ticket.mention}", ephemeral=True)
 
-class TicketCOnsultaView(discord.ui.View):
+class TicketConsultaView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
@@ -612,11 +599,10 @@ class SalaVozView(discord.ui.View):
         except Exception as e:
             await interaction.response.send_message(f"❌ Ocurrió un error: {e}", ephemeral=True)
 
-# --- EVENTO DE AUTO-ROL ---
+# --- EVENTOS DEL BOT ---
+
 @bot.event
 async def on_member_join(member):
-    # 📌 REEMPLAZA ESTE NÚMERO POR EL ID REAL DE TU ROL:
-    # Ve a Discord -> Ajustes de Servidor -> Roles -> Clic derecho al rol -> Copiar ID
     ID_DEL_CANAL = 1508947735561371720
     ID_DEL_ROL = 1503573657950097479
 
@@ -639,8 +625,8 @@ async def on_member_join(member):
     
     except discord.Forbidden:
         print("❌ El bot no tiene permisos para gestionar/ver invitaciones ('Manage Server')")
-    except Exception as e :
-        print("❌ error al procesar invitaciones: {e}")
+    except Exception as e:
+        print(f"❌ Error al procesar invitaciones: {e}")
     
     if invitador and not invitador.bot:
         invitador_id = str(invitador.id)
@@ -671,15 +657,15 @@ async def on_member_join(member):
         canal_invites = guild.get_channel(ID_CANAL_INVITACIONES)
         if canal_invites:
             embed_invite = discord.Embed(
-                title="📈 ¡Nueva invitación exitosa! ",
-                description= f"¡El enlace de invitación de {invitador.mention} ha sido utilizado!",
+                title="📈 ¡Nueva invitación exitosa!",
+                description=f"¡El enlace de invitación de {invitador.mention} ha sido utilizado!",
                 color=discord.Color.green()
             )
-            embed_invite.add_field(name="👤 invitado", value=member.mention, inline=True)
-            embed_invite.add_field(name="👤 invitado por", value=invitador.mention, inline=True)
+            embed_invite.add_field(name="👤 Invitado", value=member.mention, inline=True)
+            embed_invite.add_field(name="👤 Invitado por", value=invitador.mention, inline=True)
             embed_invite.add_field(name="🎟️ Código usado", value=f"+10 monedas 🪙 (Total actual: {nuevas_monedas})", inline=False)
             embed_invite.set_thumbnail(url=member.display_avatar.url)
-            embed_invite.set_footer(text="¡Gracias por ayudar a que crezca la comunidaad!")
+            embed_invite.set_footer(text="¡Gracias por ayudar a que crezca la comunidad!")
 
             await canal_invites.send(embed=embed_invite)
     
@@ -696,7 +682,7 @@ async def on_member_join(member):
     canal_bienvenida = guild.get_channel(ID_DEL_CANAL)
     if canal_bienvenida:
         try:
-            archivo_banner = "banner.jpeg"
+            archivo_banner = None
             for extension in ["banner.png", "banner.jpg", "banner.jpeg"]:
                 if os.path.exists(extension):
                     archivo_banner = extension
@@ -705,7 +691,7 @@ async def on_member_join(member):
             if archivo_banner:
                 background = Image.open(archivo_banner).convert("RGBA")
             else:
-                background = Image.new("RGBA", (800, 400), color= (44, 47, 51, 255))
+                background = Image.new("RGBA", (800, 400), color=(44, 47, 51, 255))
         
             avatar_url = member.display_avatar.url
             response = requests.get(avatar_url)
@@ -716,7 +702,7 @@ async def on_member_join(member):
 
             mascara = Image.new("L", avatar_size, 0)
             draw_mask = ImageDraw.Draw(mascara)
-            draw_mask.ellipse((0,0) + avatar_size, fill= 255)
+            draw_mask.ellipse((0, 0) + avatar_size, fill=255)
 
             avatar_circular = ImageOps.fit(avatar_img, avatar_size, centering=(0.5, 0.5))
             avatar_circular.putalpha(mascara)
@@ -734,7 +720,7 @@ async def on_member_join(member):
             x1 = posicion_avatar[0] + avatar_size[0] + grosor_borde // 2
             y1 = posicion_avatar[1] + avatar_size[1] + grosor_borde // 2
 
-            draw.ellipse([x0, y0, x1, y1], outline= color_borde, width=grosor_borde)
+            draw.ellipse([x0, y0, x1, y1], outline=color_borde, width=grosor_borde)
 
             texto_bienvenida = f"¡Bienvenido, {member.name}!"
             texto_miembro = f"Miembro #{len(guild.members)}"
@@ -743,7 +729,6 @@ async def on_member_join(member):
                 fuente_principal = ImageFont.truetype("BILLO___.TTF", 26)
                 fuente_secundaria = ImageFont.truetype("BILLO___.TTF", 28)
             except IOError:
-                print("⚠️ No se encontró BILLO___.TTF, usando fuente por defecto.")
                 try:
                     fuente_principal = ImageFont.truetype("impact.ttf", 28)
                     fuente_secundaria = ImageFont.truetype("impact.ttf", 18)
@@ -753,7 +738,6 @@ async def on_member_join(member):
 
             pos_x_texto = 70
             draw.text((pos_x_texto, 250), texto_bienvenida, fill=(255, 255, 255, 255), anchor="ls", font=fuente_principal)
-
             draw.text((100, 285), texto_miembro, fill=(255, 204, 0, 255), anchor="ls", font=fuente_secundaria)
 
             img_byte_arr = io.BytesIO()
@@ -761,25 +745,21 @@ async def on_member_join(member):
             img_byte_arr.seek(0)
 
             archivo_discord = discord.File(fp=img_byte_arr, filename='bienvenida.png')
-
             mensaje_personalizado = f"¡Hola {member.mention}! Bienvenido a **{guild.name}**"
 
-            await canal_bienvenida.send(content= mensaje_personalizado, file= archivo_discord)
-            print(f"Banner de bienvenida enviado para  {member.name}")
+            await canal_bienvenida.send(content=mensaje_personalizado, file=archivo_discord)
 
         except Exception as e:
             print(f"Error al generar el banner de bienvenida: {e}")
 
 @bot.event
 async def on_invite_create(invite):
-    """Actualiza el caché cuando alguien crea una nueva invitación"""
     if invite.guild.id not in invitaciones_cache:
         invitaciones_cache[invite.guild.id] = {}
     invitaciones_cache[invite.guild.id][invite.code] = invite.uses
 
 @bot.event
 async def on_invite_delete(invite):
-    """Limpia el código del caché cuando se crean nuevas invitaciones."""
     if invite.guild.id in invitaciones_cache:
         invitaciones_cache[invite.guild.id].pop(invite.code, None)
 
@@ -787,7 +767,6 @@ async def on_invite_delete(invite):
 async def on_voice_state_update(member, before, after):
     if before.channel is not None:
         canal_previo = before.channel
-
         if canal_previo.id in salas_dinamicas and len(canal_previo.members) == 0:
             try:
                 await canal_previo.delete(reason="Sala dinámica vacía.")
@@ -798,14 +777,15 @@ async def on_voice_state_update(member, before, after):
             except Exception as e:
                 print(f"❌ Error al intentar borrar sala dinámica: {e}")
 
+# Manejador Unificado de Mensajes
 @bot.event
 async def on_message(message):
-    # 🚫 IGNORAR MENSAJES DEL PROPIO BOT
     if message.author == bot.user:
         return
-        
-    # 🛡️ FILTROS DE SEGURIDAD (Mensajes prohibidos)
+
     contenido = message.content.lower() if message.content else ""
+
+    # 🛡️ Filtros de Seguridad (Mensajes prohibidos)
     for palabra in palabras_prohibidas:
         if palabra in contenido:
             try:
@@ -813,8 +793,8 @@ async def on_message(message):
             except:
                 pass
             return await message.channel.send(f"{message.author.mention} 🚫 Mensaje prohibido.", delete_after=5)
-        
-    # ⏳ CONTROL ANTISPAM
+
+    # ⏳ Control Antispam
     if not message.author.bot:
         ahora = time.time()
         u_id = message.author.id
@@ -832,15 +812,8 @@ async def on_message(message):
                 pass
             return
 
-    # 🎮 PROCESAR COMANDOS NORMALES (!dinero, !play, etc.)
-    await bot.process_commands(message)
-
-@bot.listen('on_message')
-async def detector_webhook_monedas(message):
-    # 🕵️‍♂️ Buscamos la palabra clave sin importar si viene de un webhook, bot o usuario
+    # 🕵️‍♂️ Webhook / Sistema de Captura de Recompensas por Click
     contenido_texto = message.content if message.content else ""
-    
-    # Si viene empaquetado en un Embed, extraemos el texto de la descripción
     if not contenido_texto and message.embeds:
         for embed in message.embeds:
             if embed.description and "SISTEMA_MONEDAS_RECOMPENSA:" in embed.description:
@@ -849,11 +822,9 @@ async def detector_webhook_monedas(message):
 
     if "SISTEMA_MONEDAS_RECOMPENSA:" in contenido_texto:
         try:
-            # Forzamos la extracción quitando cualquier espacio o salto de línea
             user_id = contenido_texto.split("SISTEMA_MONEDAS_RECOMPENSA:")[1].strip()
             print(f"\n📥 [¡LISTENER CAPTURADO!] Se detectó clic para el ID: {user_id}")
             
-            # Conexión directa a la base de datos local
             conn = sqlite3.connect("economia_qaybio.db")
             cursor = conn.cursor()
             
@@ -867,22 +838,18 @@ async def detector_webhook_monedas(message):
             cursor.execute("SELECT monedas FROM usuarios WHERE user_id = ?", (user_id,))
             if cursor.fetchone():
                 cursor.execute("UPDATE usuarios SET monedas = monedas + 50 WHERE user_id = ?", (user_id,))
-                print(f"💰 [ÉXITO EN CONSOLA] +50 monedas añadidas a {user_id}")
             else:
                 cursor.execute("INSERT INTO usuarios (user_id, monedas) VALUES (?, 50)", (user_id,))
-                print(f"🆕 [ÉXITO EN CONSOLA] Nuevo usuario registrado con 50 monedas: {user_id}")
                 
             conn.commit()
             conn.close()
             
-            # Intentar enviar confirmación visual a Discord
             try:
                 usuario_discord = await bot.fetch_user(int(user_id))
                 await message.channel.send(f"🪙 ¡Visita confirmada! {usuario_discord.mention} ha recibido **50 monedas** por apoyar a Qaybio.")
             except Exception as e:
                 print(f"No se pudo enviar la confirmación en el chat: {e}")
                 
-            # Intentar borrar el mensaje plano del webhook
             try:
                 await message.delete()
             except:
@@ -891,18 +858,22 @@ async def detector_webhook_monedas(message):
         except Exception as e:
             print(f"❌ Error interno en el Listener de monedas: {e}")
 
+    # Procesar Comandos
+    await bot.process_commands(message)
+
+# --- COMANDOS DEL BOT ---
+
 @bot.command(name="tienda", aliases=["store", "shop"])
 async def mostrar_tienda(ctx):
     """Muestra los rangos disponibles para comprar con monedas de Qaybio."""
     embed = discord.Embed(
-        title="🛒 tienda oficial de Rangos",
-        description= "¡Utiliza tus monedas acumuladas para comprar rangos exclusivosen el servidor!\n\n"
+        title="🛒 Tienda oficial de Rangos",
+        description="¡Utiliza tus monedas acumuladas para comprar rangos exclusivos en el servidor!\n\n"
                     "👉 *Para comprar un rango usa:* `!comprar <nombre_rango>`\n*EJEMPLO:* `!comprar vip`",
         color=discord.Color.purple()
     )
 
     for clave, datos in TIENDA_ROLES.items():
-
         nombre = datos.get("nombre", clave.upper())
         precio = datos.get("precio", 0)
         descripcion = datos.get("descripcion", "Sin descripción disponible.")
@@ -912,16 +883,16 @@ async def mostrar_tienda(ctx):
             f"**📜 Beneficios:** {descripcion}\n"
             f"**🔑 Comando de compra:** `!comprar {clave}`"
         )
-        embed.add_field(name=f" 🔹 {nombre}", value=info_producto, inline=False)
+        embed.add_field(name=f"🔹 {nombre}", value=info_producto, inline=False)
 
-    embed.set_footer(text="Platano bot • Economía e Interracciones", icon_url=ctx.guild.me.display_avatar.url)
+    embed.set_footer(text="Plátano bot • Economía e Interacciones", icon_url=ctx.guild.me.display_avatar.url)
     await ctx.send(embed=embed)
 
-@bot.command(nombre="comprar", aliases=["buy", "camjear"])
-async def comprar_rango(ctx, rango: str= None):
+@bot.command(name="comprar", aliases=["buy", "canjear"])
+async def comprar_rango(ctx, rango: str = None):
     """Procesa la compra de un rango descontando las monedas de la base de datos."""
     if not rango:
-        return await ctx.send(f"⚠️ {ctx.author.mention}, debes especificar que rango que rango deseas comprar. Usa `!tienda` para ver las opciones.")
+        return await ctx.send(f"⚠️ {ctx.author.mention}, debes especificar qué rango deseas comprar. Usa `!tienda` para ver las opciones.")
     
     rango = rango.lower()
 
@@ -933,7 +904,7 @@ async def comprar_rango(ctx, rango: str= None):
     rol_recompensa = guild.get_role(producto["rol_id"])
 
     if not rol_recompensa:
-        return await ctx.send(f"❌ Error de configuración: El rol solicitado no existe o su ID está mal configurado en el código.")
+        return await ctx.send("❌ Error de configuración: El rol solicitado no existe o su ID está mal configurado en el código.")
     
     if rol_recompensa in ctx.author.roles:
         return await ctx.send(f"⚠️ {ctx.author.mention}, ¡tú ya posees el rango **{producto['nombre']}**!")
@@ -943,10 +914,10 @@ async def comprar_rango(ctx, rango: str= None):
     conn = sqlite3.connect("economia_qaybio.db")
     cursor = conn.cursor()
 
-    cursor.execute("SELECT monedas FROM usuarios WHERE user_id = ?", (user_id))
+    cursor.execute("SELECT monedas FROM usuarios WHERE user_id = ?", (user_id,))
     resultado = cursor.fetchone()
 
-    monedas_actuales = resultado[0] if resultado  else 0
+    monedas_actuales = resultado[0] if resultado else 0
 
     if monedas_actuales < producto["precio"]:
         conn.close()
@@ -982,7 +953,7 @@ async def comprar_rango(ctx, rango: str= None):
         if canal_anuncios:
             embed_anuncio = discord.Embed(
                 title="🛍️ ¡Nueva compra en nuestra tienda! 🛍️",
-                description=f"¡Atención comunidad! {ctx.author.mention} acaba de canjear sus monedas por un beneficio exclusivo",
+                description=f"¡Atención comunidad! {ctx.author.mention} acaba de canjear sus monedas por un beneficio exclusivo.",
                 color=discord.Color.gold()
             )
 
@@ -995,7 +966,7 @@ async def comprar_rango(ctx, rango: str= None):
 
     except discord.Forbidden:
         conn = sqlite3.connect("economia_qaybio.db")
-        cursor= conn.cursor()
+        cursor = conn.cursor()
         cursor.execute("UPDATE usuarios SET monedas = monedas + ? WHERE user_id = ?", (producto["precio"], user_id))
         conn.commit()
         conn.close()
@@ -1042,7 +1013,7 @@ async def ver_dinero(ctx, miembro: discord.Member = None):
 async def enviar_enlace_personal(ctx):
     """Envía el link único por privado para que el clic sume monedas a este usuario específico."""
     user_id = ctx.author.id
-    url_monedas = f"{"https://tiendavirtual-801x.onrender.com/"}/click?user_id={user_id}"
+    url_monedas = f"https://tiendavirtual-801x.onrender.com/click?user_id={user_id}"
     
     embed = discord.Embed(
         title="🪙 Tu Enlace Personal de Monedas",
@@ -1060,7 +1031,6 @@ async def enviar_enlace_personal(ctx):
 
 @bot.command()
 async def sala_voz(ctx):
-    """Envía el panel con el botón interactivo para crear salas de voz automáticas."""
     embed = discord.Embed(
         title="🔊 Canales de Voz Temporales",
         description="¿Necesitas una sala pública para hablar con tus amigos o tu team?\n\nPresiona el botón de abajo para crear una sala al instante. ¡Se borrará sola cuando todos salgan!",
@@ -1076,10 +1046,9 @@ async def sala_voz(ctx):
 
 @bot.command()
 async def ticket(ctx):
-    
-    ticket = 1503799170409168966
-    if ctx.channel.id != ticket:
-        await ctx.send("❌ Usa esto en #tiket-consultas")
+    ticket_channel_id = 1509365435831816432
+    if ctx.channel.id != ticket_channel_id:
+        await ctx.send("❌ Usa esto en #ticket-consultas")
         return
 
     embed = discord.Embed(
@@ -1095,9 +1064,6 @@ async def ticket(ctx):
 
 @bot.command()
 async def soporte(ctx):
-    # Eliminamos la lista de canales permitidos y la verificación if ctx.channel.id
-    # Ahora se puede ejecutar donde sea que un Admin lo necesite.
-
     embed = discord.Embed(
         title="⚙️ Centro de Consultas y Soporte Técnico",
         description="¿Tienes alguna duda, reporte o inconveniente con el servidor?\n\nPresiona el botón de **💬 Realizar consulta** aquí abajo para abrir un canal privado y comunicarte directamente con la administración.",
@@ -1105,9 +1071,7 @@ async def soporte(ctx):
     )
     embed.set_footer(text="Plátano-Bot • Soporte del Servidor")
     
-    # Imprime el panel con el botón interactivo en el canal actual
-    await ctx.send(embed=embed, view=TicketCOnsultaView())
-    
+    await ctx.send(embed=embed, view=TicketConsultaView())
     try:
         await ctx.message.delete()
     except:
@@ -1115,7 +1079,6 @@ async def soporte(ctx):
 
 @bot.command()
 async def clan(ctx):
-    # Puedes restringir este comando a un canal específico si lo deseas cambiando o replicando la lógica del !ticket
     embed = discord.Embed(
         title="🛡️ Sistema de Gestión de Clanes",
         description="Gestiona tu lealtad, visualiza los clanes activos o solicita fundar uno nuevo usando las opciones interactivas de abajo.",
@@ -1123,41 +1086,7 @@ async def clan(ctx):
     )
     embed.set_footer(text="Plátano-Bot • Sistema de Facciones")
     
-    # Desplegar el menú embebido junto con los 4 botones de ClanView
     await ctx.send(embed=embed, view=ClanView())
-
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-
-    contenido = message.content.lower()
-
-    # 🚫 Filtros de Seguridad
- 
-    for palabra in palabras_prohibidas:
-        if palabra in contenido:
-            await message.delete()
-            return await message.channel.send(f"{message.author.mention} 🚫 Mensaje prohibido.", delete_after=5)
-
-    # 🚫 Control de Spam
-    ahora = time.time()
-    user_id = message.author.id
-    if user_id not in usuarios_mensajes:
-        usuarios_mensajes[user_id] = []
-    
-    usuarios_mensajes[user_id].append(ahora)
-    usuarios_mensajes[user_id] = [t for t in usuarios_mensajes[user_id] if ahora - t < 5]
-
-    if len(usuarios_mensajes[user_id]) > 5:
-        try:
-            await message.author.timeout(timedelta(minutes=10), reason="Spam detectado")
-            await message.channel.send(f"🚫 {message.author.mention} ha sido silenciado 10 min por spam.")
-        except:
-            pass
-        return
-
-    await bot.process_commands(message)
 
 @bot.command(name="say", aliases=["tts"])
 async def tts_say(ctx, *, texto: str):
@@ -1167,7 +1096,6 @@ async def tts_say(ctx, *, texto: str):
         return await ctx.send(f"⚠️ {ctx.author.mention}, ¡debes estar en un canal de voz para usar este comando!")
     
     canal_voz = ctx.author.voice.channel
-
     voice_client = discord.utils.get(bot.voice_clients, guild=ctx.guild)
 
     if not voice_client:
@@ -1188,13 +1116,10 @@ async def tts_say(ctx, *, texto: str):
 
         voice_client.stop()
 
-
-
     try:
         tts = f"{ctx.author.display_name} dice: {texto}"
         communicate = edge_tts.Communicate(tts, "es-AR-ElenaNeural")
         await communicate.save(archivo_audio)
-    
 
         source_tts = discord.FFmpegPCMAudio(archivo_audio)
         voice_client.is_music = False
@@ -1210,11 +1135,10 @@ async def tts_say(ctx, *, texto: str):
                 voice_client.is_music = True
 
                 opciones_reanudar = {
-                    'options' : f'-vn -ss {int(voice_client.segundos_acumulados)}'
+                    'options': f'-vn -ss {int(voice_client.segundos_acumulados)}'
                 }
 
                 source_musica = discord.FFmpegPCMAudio(archivo_original_musica, **opciones_reanudar)
-
                 voice_client.inicio_tiempo = time.time()
                 bot.loop.call_soon_threadsafe(voice_client.play, source_musica)
 
@@ -1247,7 +1171,6 @@ async def play(ctx, *, busqueda: str):
         es_url = busqueda.startswith("http://") or busqueda.startswith("https://")
         termino_busqueda = busqueda if es_url else f"ytsearch1:{busqueda}"
         
-        # Extraer metadatos de forma segura (download=False)
         info = await loop.run_in_executor(None, lambda: ytdl.extract_info(termino_busqueda, download=False))
         
         if not info:
@@ -1260,14 +1183,12 @@ async def play(ctx, *, busqueda: str):
         else:
             datos_video = info
 
-        # Guardar metadatos en variables nativas limpias
         url_video = str(datos_video.get('webpage_url', ''))
         titulo = str(datos_video.get('title', 'Canción Desconocida'))
         segundos = datos_video.get('duration', 0)
         duracion = str(timedelta(seconds=int(segundos))) if segundos else "Desconocida"
         thumbnail = str(datos_video.get('thumbnail', ''))
 
-        # Ejecutar la descarga real pasando el link directo
         try:
             await loop.run_in_executor(None, lambda: ytdl.extract_info(url_video, download=True))
         except Exception as download_error:
@@ -1288,11 +1209,9 @@ async def play(ctx, *, busqueda: str):
         traceback.print_exc()
         return await mensaje_espera.edit(content=f"❌ Error al procesar la canción: {e}")
 
-    # Control de reproducción de audio de Discord
     if voice_client.is_playing() or voice_client.is_paused():
         voice_client.stop()
 
-    # Sincronización de tiempos para que no interfiera con tu comando !say
     voice_client.is_music = True
     voice_client.archivo_musica = filename
     voice_client.segundos_acumulados = 0 
@@ -1301,7 +1220,6 @@ async def play(ctx, *, busqueda: str):
     source = discord.FFmpegPCMAudio(filename, **FFMPEG_LOCAL_OPTIONS)
     voice_client.play(source)
 
-    # Enviar Embed con la información limpia
     embed_music = discord.Embed(
         title="🎵 Reproduciendo Ahora",
         description=f"**[{titulo}]({url_video})**" if url_video else f"**{titulo}**",
@@ -1362,7 +1280,7 @@ async def stop(ctx):
 async def lanzar_sorteo(ctx):
     """Lanza el anuncio del sorteo premium en el canal actual."""
     embed = discord.Embed(
-        title= "🔥 ¡Apertura del sorteo PREMIUM! 🔥",
+        title="🔥 ¡Apertura del sorteo PREMIUM! 🔥",
         description=f"Se ha abierto un sorteo exclusivo en la comunidad de Qaybio.\n\n"
                     f"🏆 **Premio:** ¡Un gran premio especial de 2000 monedas en juego!\n"
                     f"🎟️ **Costo de inscripción:** `{Precio_sorteo}` monedas 🪙\n\n"
@@ -1371,7 +1289,7 @@ async def lanzar_sorteo(ctx):
         color=discord.Color.red()
     )
 
-    embed.set_footer(text="Asegurate de tener el saldo suficiente antes de hacer clic.")
+    embed.set_footer(text="Asegúrate de tener el saldo suficiente antes de hacer clic.")
 
     await ctx.send(embed=embed, view=SorteoView())
     try:
@@ -1380,28 +1298,30 @@ async def lanzar_sorteo(ctx):
         pass
 
 # --- EJECUCIÓN SEGURA ---
-token_seguro = "MTQ5Mjk2MTM5NjE1NjI3MjkwMQ.Ggbwkq.a1zcEPoB8xTw1fqa70tO_7K8Xw99xspz8erGOg"
+# Se obtiene el token desde las variables de entorno de Render o local.
+TOKEN = os.getenv("DISCORD_TOKEN", "MTQ5Mjk2MTM5NjE1NjI3MjkwMQ.Ggbwkq.a1zcEPoB8xTw1fqa70tO_7K8Xw99xspz8erGOg")
 
 def iniciar_bot():
     try:
-        bot.run(token_seguro)
+        bot.run(TOKEN)
     except Exception as e:
         print(f"❌ Error al arrancar el bot de Discord: {e}")
 
 if __name__ == "__main__":
-    if token_seguro and token_seguro != "TU_TOKEN_AQUI":
+    if TOKEN:
         print("🚀 Iniciando procesos en paralelo de Plátano-Bot...")
         
-        # 1. Ejecutamos el bot de Discord en un hilo secundario
+        # 1. Hilo secundario para Discord Bot
         t = threading.Thread(target=iniciar_bot)
         t.daemon = True
         t.start()
         
-        # 2. Corremos Flask en el hilo principal con el puerto corregido (7860) para congelar la consola
+        # 2. Hilo principal para servidor Flask (Render detecta dinámicamente PORT)
+        puerto = int(os.environ.get("PORT", 10000))
         try:
-            app.run(host='0.0.0.0', port=7860, debug=False, use_reloader=False)
+            app.run(host='0.0.0.0', port=puerto, debug=False, use_reloader=False)
         except KeyboardInterrupt:
             print("\n🛑 Servidor apagado localmente por el usuario.")
     else:
-        print("❌ ERROR: No has configurado tu variable 'token_seguro' con un token válido.")
+        print("❌ ERROR: No se ha detectado la variable de entorno DISCORD_TOKEN.")
 
