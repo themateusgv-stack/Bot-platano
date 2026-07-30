@@ -707,7 +707,7 @@ async def on_member_join(member):
             avatar_circular = ImageOps.fit(avatar_img, avatar_size, centering=(0.5, 0.5))
             avatar_circular.putalpha(mascara)
 
-            posicion_avatar = (160, 100)
+            posicion_avatar = (140, 120)
             background.paste(avatar_circular, posicion_avatar, avatar_circular)
 
             draw = ImageDraw.Draw(background)
