@@ -1,0 +1,6 @@
+discord.py
+Pillow
+requests
+Flask
+edge-tts
+yt-dlp
