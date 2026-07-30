@@ -682,7 +682,7 @@ async def on_member_join(member):
     canal_bienvenida = guild.get_channel(ID_DEL_CANAL)
     if canal_bienvenida:
         try:
-            archivo_banner = "banner.jpeg"
+            archivo_banner = "banner.png"
             for extension in ["banner.png", "banner.jpg", "banner.jpeg"]:
                 if os.path.exists(extension):
                     archivo_banner = extension
