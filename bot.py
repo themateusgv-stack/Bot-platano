@@ -1359,7 +1359,7 @@ async def lanzar_sorteo(ctx):
 
 # --- EJECUCIÓN SEGURA ---
 # Se obtiene el token desde las variables de entorno de Render o local.
-TOKEN = os.getenv("DISCORD_TOKEN", "MTQ5Mjk2MTM5NjE1NjI3MjkwMQ.Gsh_r9.Q-O2D6JFhyzRhUyl3rBcOL47B_F7hX4y8GSYVU")
+TOKEN = os.getenv("DISCORD_TOKEN", "MTQ5Mjk2MTM5NjE1NjI3MjkwMQ.G5ape-.lOv7ipDutlhEuC_DJT9YYW2pwlQZVSsBtstuxE")
 
 def iniciar_bot():
     try:
