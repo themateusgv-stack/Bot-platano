@@ -11,11 +11,15 @@ from PIL import Image, ImageDraw, ImageOps, ImageFont
 import io
 import requests
 import asyncio
+import base64
 import yt_dlp
 import sqlite3
 import random
 import static_ffmpeg
 
+
+DOWNLOAD_DIR = "/tmp/bot_audio"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 static_ffmpeg.add_paths()
 
 # --- CONFIGURACIÓN DE FLASK (Servidor Web para Render / Mantener Vivo) ---
@@ -105,24 +109,51 @@ TIENDA_ROLES = {
 
 salas_dinamicas = []
 
+COOKIES_FILE = "/tmp/cookies.txt"
+cookies_b64 = os.getenv("YOUTUBE_COOKIES_BASE64")
+cookiefile_path = None
+
+if cookies_b64:
+    try:
+        cookies_data = base64.b64decode(cookies_b64).decode("utf-8")
+        
+        # Garantizar encabezado Netscape obligatorio para yt-dlp
+        if not cookies_data.startswith("# Netscape HTTP Cookie File"):
+            cookies_data = "# Netscape HTTP Cookie File\n" + cookies_data
+            
+        with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+            f.write(cookies_data)
+            
+        cookiefile_path = COOKIES_FILE
+        print("🍪 Cookies de YouTube decodificadas e inyectadas correctamente.")
+    except Exception as e:
+        print(f"⚠️ Error al procesar las cookies: {e}")
+
 YTDL_OPTIONS = {
-    'format': 'bestaudio/best',
-    'restrictfilenames': True,
+    'format': 'best',
+    'outtmpl': '/tmp/%(id)s.%(ext)s',
     'noplaylist': True,
     'nocheckcertificate': True,
-    'ignoreerrors': False,
-    'logtostderr': False,
     'quiet': True,
     'no_warnings': True,
-    'default_search': 'auto',
+    'default_search': 'ytsearch1',
     'source_address': '0.0.0.0',
+    'cookiefile': cookiefile_path,  # Apunta directamente a /tmp/cookies.txt
+
+    
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['mweb', 'web', 'android', 'ios']
+        }
+    },
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
         'preferredcodec': 'mp3',
         'preferredquality': '192',
     }],
-    'outtmpl': 'music_cache_%(guild_id)s.%(ext)s',
+    'keepvideo': False,
 }
+
 
 FFMPEG_LOCAL_OPTIONS = {
     'options': '-vn',
@@ -160,7 +191,7 @@ ID_CANAL_PROMOCIONES = 1522356604186661025
 ID_CANAL_ANUNCIO_COMPRAS = 1529240157188784128
 ID_CANAL_INVITACIONES = 1508947735561371720
 Precio_sorteo = 2000
-ID_canal_LOGS_sorteo = 1529242250775892018
+ID_canal_LOGS_sorteo = 11523337324862111914
 
 async def cargar_invitaciones():
     """Cargar todas las invitaciones del caché"""
@@ -603,9 +634,8 @@ class SalaVozView(discord.ui.View):
 
 @bot.event
 async def on_member_join(member):
-    ID_DEL_CANAL = 1508947735561371720
+    ID_DEL_CANAL = 1522356604186661025
     ID_DEL_ROL = 1503573657950097479
-
     guild = member.guild
     invitador = None
     codigo_usado = None
@@ -683,7 +713,7 @@ async def on_member_join(member):
     if canal_bienvenida:
         try:
             archivo_banner = None
-            for extension in ["banner.png", "banner.jpg", "banner.jpeg", "Banner.jpg"]:
+            for extension in ["banner.png", "banner.jpg", "banner.jpeg"]:
                 if os.path.exists(extension):
                     archivo_banner = extension
                     break
@@ -707,7 +737,7 @@ async def on_member_join(member):
             avatar_circular = ImageOps.fit(avatar_img, avatar_size, centering=(0.5, 0.5))
             avatar_circular.putalpha(mascara)
 
-            posicion_avatar = (140, 120)
+            posicion_avatar = (160, 100)
             background.paste(avatar_circular, posicion_avatar, avatar_circular)
 
             draw = ImageDraw.Draw(background)
@@ -1013,7 +1043,7 @@ async def ver_dinero(ctx, miembro: discord.Member = None):
 async def enviar_enlace_personal(ctx):
     """Envía el link único por privado para que el clic sume monedas a este usuario específico."""
     user_id = ctx.author.id
-    url_monedas = f"https://tiendavirtual-801x.onrender.com/click?user_id={user_id}"
+    url_monedas = f"https://qaybio.onrender.com/click?user_id={user_id}"
     
     embed = discord.Embed(
         title="🪙 Tu Enlace Personal de Monedas",
@@ -1046,7 +1076,7 @@ async def sala_voz(ctx):
 
 @bot.command()
 async def ticket(ctx):
-    ticket_channel_id = 1509365435831816432
+    ticket_channel_id = 1503799170409168966
     if ctx.channel.id != ticket_channel_id:
         await ctx.send("❌ Usa esto en #ticket-consultas")
         return
@@ -1149,7 +1179,7 @@ async def tts_say(ctx, *, texto: str):
 
 @bot.command(name="play", aliases=["p"])
 async def play(ctx, *, busqueda: str):
-    """Busca y reproduce canciones configurando outtmpl como un diccionario válido para yt_dlp."""
+    """Busca, descarga localmente en /tmp y reproduce audio en el canal de voz."""
     if not ctx.author.voice:
         return await ctx.send(f"⚠️ {ctx.author.mention}, ¡debes entrar a un canal de voz primero!")
 
@@ -1164,44 +1194,83 @@ async def play(ctx, *, busqueda: str):
     mensaje_espera = await ctx.send(f"🔍 Buscando **{busqueda}** en YouTube...")
 
     loop = bot.loop or asyncio.get_event_loop()
-    try:
-        filename_base = f"music_cache_{ctx.guild.id}"
-        ytdl.params['outtmpl'] = {'default': f'{filename_base}.%(ext)s'}
-        
+    try:    
         es_url = busqueda.startswith("http://") or busqueda.startswith("https://")
         termino_busqueda = busqueda if es_url else f"ytsearch1:{busqueda}"
         
-        info = await loop.run_in_executor(None, lambda: ytdl.extract_info(termino_busqueda, download=False))
+        # 1. Extraemos la información sin omitir el procesamiento para obtener la URL real
+        opts_busqueda = {
+            'extract_flat': True,
+            'skip_download': True,
+            'quiet': True,
+            'no_warnings': True,
+        }
+        if cookiefile_path:
+            opts_busqueda['cookiefile'] = cookiefile_path
+
+        with yt_dlp.YoutubeDL(opts_busqueda) as ytdl_search:
+            info = await loop.run_in_executor(
+                None, lambda: ytdl_search.extract_info(termino_busqueda, download=False)
+            )
         
         if not info:
             return await mensaje_espera.edit(content="❌ No se encontró el video.")
 
-        if 'entries' in info:
-            if len(info['entries']) == 0:
-                return await mensaje_espera.edit(content="❌ Sin resultados.")
+        if 'entries' in info and info['entries']:
             datos_video = info['entries'][0]
         else:
             datos_video = info
 
-        url_video = str(datos_video.get('webpage_url', ''))
+        video_id = datos_video.get('id')
+        url_video = datos_video.get('webpage_url') or f"https://www.youtube.com/watch?v={video_id}"
         titulo = str(datos_video.get('title', 'Canción Desconocida'))
         segundos = datos_video.get('duration', 0)
         duracion = str(timedelta(seconds=int(segundos))) if segundos else "Desconocida"
         thumbnail = str(datos_video.get('thumbnail', ''))
 
-        try:
-            await loop.run_in_executor(None, lambda: ytdl.extract_info(url_video, download=True))
-        except Exception as download_error:
-            print(f"[Descarga] Nota u observación durante la conversión: {download_error}")
+        opts_descarga = {
+            'format': 'best', # Fallback si no hay audio puro
+            'outtmpl': '/tmp/%(id)s.%(ext)s',
+            'noplaylist': True,
+            'nocheckcertificate': True,
+            'quiet': True,
+            'no_warnings': True,
+            'source_address': '0.0.0.0',
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web', 'mweb'],
+                }
+            },
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'keepvideo': False,
+        }
 
+        if cookiefile_path:
+            opts_descarga['cookiefile'] = cookiefile_path
+
+        with yt_dlp.YoutubeDL(opts_descarga) as ytdl_dl:
+            await loop.run_in_executor(
+                None, lambda: ytdl_dl.extract_info(url_video, download=True)
+            )
+
+        # Base para construir la ruta del archivo
+        filename_base = f"/tmp/{video_id}"
         filename = f"{filename_base}.mp3"
+        
+        # Si FFmpeg extractAudio falló en convertir a MP3, busca las extensiones crudas
         if not os.path.exists(filename):
             for ext in ['m4a', 'webm', 'opus', 'mp4']:
-                if os.path.exists(f"{filename_base}.{ext}"):
-                    filename = f"{filename_base}.{ext}"
+                posible_archivo = f"{filename_base}.{ext}"
+                if os.path.exists(posible_archivo):
+                    filename = posible_archivo
                     break
 
         if not os.path.exists(filename):
+            print(f"[DEBUG Render] Archivos presentes en {DOWNLOAD_DIR}: {os.listdir(DOWNLOAD_DIR)}")
             return await mensaje_espera.edit(content="❌ Error: No se pudo generar el archivo de audio local.")
 
     except Exception as e:
@@ -1209,14 +1278,17 @@ async def play(ctx, *, busqueda: str):
         traceback.print_exc()
         return await mensaje_espera.edit(content=f"❌ Error al procesar la canción: {e}")
 
+    # Detener reproducción actual para reemplazar con el nuevo archivo
     if voice_client.is_playing() or voice_client.is_paused():
         voice_client.stop()
 
+    # Variables de estado requeridas para tu sistema de !say
     voice_client.is_music = True
     voice_client.archivo_musica = filename
     voice_client.segundos_acumulados = 0 
     voice_client.inicio_tiempo = time.time() 
 
+    # Reproducción con FFmpeg desde la ruta local /tmp
     source = discord.FFmpegPCMAudio(filename, **FFMPEG_LOCAL_OPTIONS)
     voice_client.play(source)
 
@@ -1232,18 +1304,6 @@ async def play(ctx, *, busqueda: str):
 
     await mensaje_espera.delete()
     await ctx.send(embed=embed_music)
-
-@bot.command(name="pause")
-async def pause(ctx):
-    """Pausa la canción actual."""
-    voice_client = discord.utils.get(bot.voice_clients, guild=ctx.guild)
-    if voice_client and voice_client.is_playing():
-        tiempo_reproducido = time.time() - voice_client.inicio_tiempo
-        voice_client.segundos_acumulados += tiempo_reproducido
-        voice_client.pause()
-        await ctx.send("⏸️ Música pausada.")
-    else:
-        await ctx.send("⚠️ No hay música reproduciéndose actualmente.")
 
 @bot.command(name="resume")
 async def resume(ctx):
@@ -1299,7 +1359,7 @@ async def lanzar_sorteo(ctx):
 
 # --- EJECUCIÓN SEGURA ---
 # Se obtiene el token desde las variables de entorno de Render o local.
-TOKEN = os.getenv("DISCORD_TOKEN", "MTQ5Mjk2MTM5NjE1NjI3MjkwMQ.Ggbwkq.a1zcEPoB8xTw1fqa70tO_7K8Xw99xspz8erGOg")
+TOKEN = os.getenv("DISCORD_TOKEN", "MTQ5Mjk2MTM5NjE1NjI3MjkwMQ.Gsh_r9.Q-O2D6JFhyzRhUyl3rBcOL47B_F7hX4y8GSYVU")
 
 def iniciar_bot():
     try:
@@ -1324,4 +1384,5 @@ if __name__ == "__main__":
             print("\n🛑 Servidor apagado localmente por el usuario.")
     else:
         print("❌ ERROR: No se ha detectado la variable de entorno DISCORD_TOKEN.")
+
 
