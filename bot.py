@@ -634,7 +634,7 @@ class SalaVozView(discord.ui.View):
 
 @bot.event
 async def on_member_join(member):
-    ID_DEL_CANAL = 1522356604186661025
+    ID_DEL_CANAL = 1508947735561371720
     ID_DEL_ROL = 1503573657950097479
     guild = member.guild
     invitador = None
