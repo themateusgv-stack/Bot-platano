@@ -713,7 +713,7 @@ async def on_member_join(member):
     if canal_bienvenida:
         try:
             archivo_banner = None
-            for extension in ["banner.png", "banner.jpg", "banner.jpeg"]:
+            for extension in ["banner.png", "banner.jpg", "banner.jpeg","Banner.jpg"]:
                 if os.path.exists(extension):
                     archivo_banner = extension
                     break
