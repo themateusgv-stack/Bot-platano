@@ -158,11 +158,12 @@ MENSAJES_PROMO = [
     "🚀 Qaybio se actualiza constantemente, visítanos para ver las novedades."
 ]
 
-ID_CANAL_PROMOCIONES = 1522356604186661025
-ID_CANAL_ANUNCIO_COMPRAS = 1529240157188784128
-ID_CANAL_INVITACIONES = 1508947735561371720
+ID_CANAL_PROMOCIONES = 1523179944077819984
+ID_CANAL_ANUNCIO_COMPRAS = 122321331111111111
+ID_CANAL_INVITACIONES = 223231322222222222222222
 Precio_sorteo = 2000
-ID_canal_LOGS_sorteo = 1529242250775892018
+ID_canal_LOGS_sorteo = 1111111111
+ID_CANAL_PANEL_VOZ = 1537561694325309440
 
 async def cargar_invitaciones():
     """Cargar todas las invitaciones del caché"""
@@ -184,11 +185,11 @@ async def promocion_diaria():
         embed = discord.Embed(
             title="🌐 ¡Visita Qaybio!",
             description=f"{mensaje_elegido}\n\n"
-                        f"👉 Entra aquí para ganar **50 monedas**: [Ir a Qaybio](https://qaybio.onrender.com/)\n"
+                        f"👉 Entra aquí para ganar **50 monedas**: [Ir a Qaybio](https://tiendavirtual-801x.onrender.com/)\n"
                         f"Escribe el comando `!link` y te enviaré tu enlace único por mensaje privado.",
             color=discord.Color.gold()
         )
-        URL_DEL_BANNER = "https://qaybio.onrender.com/static/imagenes/banner.jpg"
+        URL_DEL_BANNER = "https://tiendavirtual-801x.onrender.com/static/imagenes/banner.jpg"
         embed.set_image(url=URL_DEL_BANNER)
         await canal.send(embed=embed)
 
@@ -245,22 +246,68 @@ async def recompensa_mensual_autonoma():
         
     conn.close()
 
-@bot.event
-async def on_ready():
-    bot.add_view(TicketConsultaView())
-    bot.add_view(SalaVozView())
-    bot.add_view(SorteoView())
 
-    await cargar_invitaciones()
-
-    print(f"✅ Bot conectado como {bot.user}")
-    
-    if not promocion_diaria.is_running():
-        promocion_diaria.start()
-    if not recompensa_mensual_autonoma.is_running():
-        recompensa_mensual_autonoma.start()
 
 # --- VISTAS Y MODALES (UI) ---
+class FormularioEditarSalaModal(discord.ui.Modal, title="Configurar Sala Temporal"):
+    def __init__(self, canal_id: int):
+        super().__init__(timeout=None)
+        self.canal_id = canal_id
+
+    nombre_input = discord.ui.TextInput(
+        label="Nuevo Nombre del Canal",
+        placeholder="Ej: Bedrock Realms, Charla...",
+        max_length=30,
+        required=True
+    )
+
+    estado_input = discord.ui.TextInput(
+        label="Estado / Descripción (se muestra abajo)",
+        placeholder="Ej: Perú es clave, Solo micro...",
+        max_length=50,
+        required=False
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Evita el timeout de 3 segundos
+        await interaction.response.defer(ephemeral=True)
+
+        canal = interaction.guild.get_channel(self.canal_id)
+        if not canal:
+            return await interaction.followup.send("❌ El canal ya no existe.", ephemeral=True)
+
+        nuevo_nombre = f"🔊 {self.nombre_input.value}"
+        nuevo_estado = self.estado_input.value.strip()
+
+        try:
+            # Renombrar canal
+            await canal.edit(name=nuevo_nombre)
+
+            # Editar el estado de voz (descripción)
+            if nuevo_estado:
+                try:
+                    await interaction.client.http.request(
+                        discord.http.Route('PUT', '/channels/{channel_id}/voice-status', channel_id=canal.id),
+                        json={'status': nuevo_estado}
+                    )
+                except Exception as e:
+                    print(f"⚠️ Error al actualizar estado de voz: {e}")
+
+            await interaction.followup.send(f"✅ ¡Canal actualizado a **{nuevo_nombre}**!", ephemeral=True)
+
+        except discord.Forbidden:
+            await interaction.followup.send("❌ El bot no tiene permisos para editar este canal.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error al editar: `{e}`", ephemeral=True)
+            
+class ControlSalaView(discord.ui.View):
+    def __init__(self, canal_id: int):
+        super().__init__(timeout=None)
+        self.canal_id = canal_id
+
+    @discord.ui.button(label="Personalizar Sala ✏️", style=discord.ButtonStyle.primary, custom_id="btn_editar_sala_temp")
+    async def abrir_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(FormularioEditarSalaModal(canal_id=self.canal_id))
 
 class RegistroSorteoModal(discord.ui.Modal, title="Inscripción del Sorteo Premium"):
     nombre_real = discord.ui.TextInput(
@@ -585,28 +632,81 @@ class SalaVozView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Crear Sala de Voz", style=discord.ButtonStyle.primary, emoji="🔊", custom_id="btn_crear_sala_voz")
+    @discord.ui.button(label="Crear Sala Temporal 🔊", style=discord.ButtonStyle.primary, emoji="➕", custom_id="btn_crear_sala_voz_visual")
     async def crear_sala(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild = interaction.guild
+        member = interaction.user
+
+        if not member.voice or not member.voice.channel:
+            return await interaction.response.send_message(
+                "⚠️ **Para crear tu sala debes estar conectado a un canal de voz primero.**\n"
+                "Conéctate a cualquier canal de voz e inténtalo de nuevo para moverte automáticamente.",
+                ephemeral = True
+            )
 
         nombre_canal = f"🔊 Sala de {interaction.user.display_name}"
 
         try:
-            nuevo_canal = await guild.create_voice_channel(name=nombre_canal)
+            await interaction.response.defer(ephemeral = True)
+
+            categoria_destino = interaction.channel.category if hasattr(interaction.channel, 'category') else None
+            
+            nuevo_canal = await guild.create_voice_channel(
+                name=nombre_canal,
+                category = categoria_destino,
+                reason=f"Sala temporal creada por {member.display_name}"
+            )
             salas_dinamicas.append(nuevo_canal.id)
 
-            await interaction.response.send_message(f"✅ Tu sala de voz temporal ha sido creada: {nuevo_canal.mention}\n*Se eliminará automáticamente cuando quede vacía.*", ephemeral=True)
+            await member.move_to(nuevo_canal, reason="Movimiento automático a su nueva sala de voz temporal.")
+
+            await interaction.followup.send(
+                f"✅ ¡Hecho! Te he movido obligatoriamente a tu sala: {nuevo_canal.mention}", 
+                ephemeral=True
+            )
         except discord.Forbidden:
             await interaction.response.send_message("❌ El bot no tiene permisos para crear canales de voz.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ Ocurrió un error: {e}", ephemeral=True)
 
 # --- EVENTOS DEL BOT ---
+@bot.event
+async def on_ready():
+    bot.add_view(TicketConsultaView())
+    bot.add_view(SalaVozView())
+    bot.add_view(SorteoView())
 
+    await cargar_invitaciones()
+
+    canal_panel = bot.get_channel(ID_CANAL_PANEL_VOZ)
+    if canal_panel:
+        embed_panel = discord.Embed(
+            title = "🔊Central de Sala de Voz temporales",
+            description = "Presiona el botón **Crear Sala Temporal 🔊** de abajo para abrir una sala privada instantánea.\n\n"
+                        "✨ **Reglas automáticas:**\n"
+                        "• Tu sala permanecerá mientras haya usuarios dentro.\n"
+                        "• **Se borrará automáticamente** cuando la última persona se desconecte.",
+            color = discord.Color.blurple()
+        )
+        embed_panel.set_footer(text= "Platano-Bot • Sistema dinámico de Voz")
+
+        try:
+            await canal_panel.send(embed=embed_panel, view=SalaVozView())
+            print(f"✅ Panel de salas de voz publicado en el canal #{canal_panel.name}")
+        except Exception as e:
+            print(f"⚠️ No se pudo enviar el panel de salas de voz: {e}")
+            
+    print(f"✅ Bot conectado como {bot.user}")
+    
+    if not promocion_diaria.is_running():
+        promocion_diaria.start()
+    if not recompensa_mensual_autonoma.is_running():
+        recompensa_mensual_autonoma.start()
+        
 @bot.event
 async def on_member_join(member):
-    ID_DEL_CANAL = 1508947735561371720
-    ID_DEL_ROL = 1503573657950097479
+    ID_DEL_CANAL = 1509365073166991420
+    ID_DEL_ROL = 1509366583968141412
 
     guild = member.guild
     invitador = None
@@ -767,17 +867,42 @@ async def on_invite_delete(invite):
 
 @bot.event
 async def on_voice_state_update(member, before, after):
-    if before.channel is not None:
-        canal_previo = before.channel
-        if canal_previo.id in salas_dinamicas and len(canal_previo.members) == 0:
+    if after.channel and after.channel.id == ID_CANAL_PANEL_VOZ:
+        guild = member.guild
+        categoria = after.channel.category
+        
+        try:
+            # 1. Crear canal inmediatamente
+            nueva_sala = await guild.create_voice_channel(
+                name=f"🔊 Sala de {member.display_name}",
+                category=categoria,
+                reason="Sala de voz temporal"
+            )
+            salas_dinamicas.append(nueva_sala.id)
+
+            # 2. Mover al usuario de inmediato sin sacarlo de voz
+            await member.move_to(nueva_sala)
+
+            # 3. Mandar el botón al chat integrado de la propia sala creada
+            embed = discord.Embed(
+                title="🎙️ ¡Bienvenido a tu sala temporal!",
+                description="Presiona el botón de abajo si quieres cambiar el **Nombre** o el **Estado** del canal.",
+                color=discord.Color.green()
+            )
+            await nueva_sala.send(embed=embed, view=ControlSalaView(canal_id=nueva_sala.id))
+
+        except discord.Forbidden:
+            print("❌ Falta permiso 'Mover Miembros' o 'Administrar Canales'.")
+        except Exception as e:
+            print(f"❌ Error en la creación de la sala: {e}")
+            
+    if before.channel and before.channel.id in salas_dinamicas:
+        if len(before.channel.members) == 0:
+            salas_dinamicas.remove(before.channel.id)
             try:
-                await canal_previo.delete(reason="Sala dinámica vacía.")
-                salas_dinamicas.remove(canal_previo.id)
-                print(f"🗑️ Sala de voz temporal '{canal_previo.name}' eliminada por quedarse vacía.")
-            except discord.Forbidden:
-                print(f"❌ Sin permisos para eliminar la sala de voz vacía: {canal_previo.name}")
+                await before.channel.delete(reason="Canal temporal vacío")
             except Exception as e:
-                print(f"❌ Error al intentar borrar sala dinámica: {e}")
+                print(f"❌ No se pudo eliminar el canal temporal: {e}")
 
 # Manejador Unificado de Mensajes
 @bot.event
@@ -1048,7 +1173,7 @@ async def sala_voz(ctx):
 
 @bot.command()
 async def ticket(ctx):
-    ticket_channel_id = 1503799170409168966
+    ticket_channel_id = 1509365435831816432
     if ctx.channel.id != ticket_channel_id:
         await ctx.send("❌ Usa esto en #ticket-consultas")
         return
